@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<!--[if lt IE 7]>      <html class="no-js lt-ie9 lt-ie8 lt-ie7"> <![endif]-->
+<!--[if IE 7]>         <html class="no-js lt-ie9 lt-ie8"> <![endif]-->
+<!--[if IE 8]>         <html class="no-js lt-ie9"> <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js"> <!--<![endif]-->
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+        <title></title>
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width">
+
+        <!-- Place favicon.ico and apple-touch-icon.png in the root directory -->
+
+        <link rel="stylesheet" href="css/normalize.css">
+        <link rel="stylesheet" href="css/main.css">
+        <script src="js/vendor/modernizr-2.6.2.min.js"></script>
+    </head>
+    <body>
+        <!--[if lt IE 7]>
+            <p class="chromeframe">You are using an <strong>outdated</strong> browser. Please <a href="http://browsehappy.com/">upgrade your browser</a> or <a href="http://www.google.com/chromeframe/?redirect=true">activate Google Chrome Frame</a> to improve your experience.</p>
+        <![endif]-->
+
+        <!-- Add your site or application content here -->
+        <p>WebGL Heat Mapping</p>
+		<div style="float:left;">
+		Sigma: <input type="range" id="sigmaSlider" min="1" max="20" value="5"><br />
+		Norm: <input type="range" id="normSlider" min="1" max="2000000" value="5"><br />
+		<input type="radio" name="mapType" value="a">Microsoft Virtual Earth Satellite<br/>
+		<input type="radio" name="mapType" value="r">Microsoft Virtual Earth Road<br/>
+		<input type="radio" name="mapType" value="h">Microsoft Virtual Earth Hybrid<br/>
+		<input type="radio" name="mapType" value="os">Ordnance Survey<br/>
+		<input type="radio" name="mapType" value="g">Google Maps<br/>
+		</div>
+		<div align="center">
+		<div id="canvasContainer">
+		<canvas id="canvas"> </canvas>
+		</div>
+		</div>
+				
+		<script id="vertexShader" type="x-shader/x-vertex">
+			attribute vec2 aVertexPosition;
+			attribute vec2 aGpsCoord;
+			
+			uniform float uZoomLevel;
+			uniform float uSigmaV;
+			uniform float uCutoffSigmaV;
+			uniform vec2 uGpsCentre;
+			uniform vec2 uViewportSizeV;
+			
+			varying vec2 vGpsCoord; // To be set, in viewport pixel coords.
+	
+			void main()	{
+				//gl_Position = vec4( aVertexPosition, 0.0, 1.0 );
+				vGpsCoord = floor((uViewportSizeV / 2.0) + ((aGpsCoord - uGpsCentre) * (pow(2.0,uZoomLevel))));
+				
+				vec2 maxRadius = aVertexPosition * uCutoffSigmaV * uSigmaV;
+				
+				vec2 vertexPosPixels = maxRadius + vec2(vGpsCoord.x, uViewportSizeV.y - vGpsCoord.y);
+				
+				gl_Position = vec4((vertexPosPixels / uViewportSizeV) * 2.0 - 1.0, 0.0,1.0);
+			}
+		</script>
+		
+		<script id="fragmentShader" type="x-shader/x-fragment">
+			precision mediump float;
+			
+			uniform vec2 uViewportSizeF;
+			uniform float uSigmaF;
+			uniform float uCutoffSigmaF;
+			
+			varying vec2 vGpsCoord;
+
+			float sq(float x) { return x*x; }
+			
+			void main() {
+				vec2 xy = vec2(gl_FragCoord.x, uViewportSizeF.y - gl_FragCoord.y);
+				
+				float distSquared = sq(xy.x - vGpsCoord.x) + sq(xy.y - vGpsCoord.y);
+				
+				if (distSquared > sq(uCutoffSigmaF*uSigmaF))
+					discard;
+					
+				float gauss = exp(-(distSquared)/(2.0*sq(uSigmaF))); 
+				
+				gl_FragColor = vec4(gauss, 0.0, 0.0, 1.0);
+			}
+		</script>
+		
+		<script id="colorMapVertexShader" type="x-shader/x-fragment">
+			attribute vec2 aVertexPosition;
+
+			varying vec2 vTexCoord;
+	
+			void main()	{
+				gl_Position = vec4( aVertexPosition, 0.0, 1.0 );
+				vTexCoord = (aVertexPosition + 1.0) / 2.0;
+			}
+		</script>
+		
+		<script id="colorMapFragmentShader" type="x-shader/x-fragment">
+			precision mediump float;
+			
+			uniform float uNorm;
+			uniform sampler2D uTexture;
+			uniform vec2 uTextureSize;
+			uniform vec2 uViewportSize;
+			uniform vec4 uColorMap[8];
+			
+			varying vec2 vTexCoord;
+			
+			vec4 getColorMap(int i) {
+				if (i == 0) return uColorMap[0];
+				if (i == 1) return uColorMap[1];
+				if (i == 2) return uColorMap[2];
+				if (i == 3) return uColorMap[3];
+				if (i == 4) return uColorMap[4];
+				if (i == 5) return uColorMap[5];
+				if (i == 6) return uColorMap[6];
+				if (i == 7) return uColorMap[7];
+				return uColorMap[7];
+			}
+			
+			vec4 getColorMapColor(in float value)
+			{
+				float colorValue = value * 7.0;
+				int sel = int( floor( colorValue ) );
+
+				if( sel >= 7 ) {
+					return getColorMap(7);
+				}
+				else if( sel < 0 ) {
+					return getColorMap(0);
+				}
+				else {
+					colorValue -= float( sel );
+					return mix(getColorMap(sel), getColorMap(sel+1), colorValue);
+				}
+			}
+			
+			void main() {
+				float val = texture2D(uTexture, vTexCoord.xy * uViewportSize / uTextureSize).r/uNorm;
+				
+				
+				gl_FragColor = vec4(getColorMapColor(val)/255.0);
+				//gl_FragColor = vec4(1.0,0.0,0.0,1.0);
+			}
+		</script>
+		
+
+        <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.9.0/jquery.min.js"></script>
+		<script type='text/javascript' src='http://flexicontent.googlecode.com/svn-history/r1517/trunk/com_flexicontent_v2.x/site/librairies/fancybox/lib/jquery.mousewheel-3.0.6.pack.js'></script>
+        <script>window.jQuery || document.write('<script src="js/vendor/jquery-1.9.0.min.js"><\/script>')</script>
+        <script src="js/plugins.js"></script>
+        <script src="trk.js"></script>
+        <script src="js/vendor/webgl-debug.js"></script>
+        <script src="js/main.js"></script>
+
+        <script>
+			
+        </script>
+    </body>
+</html>
